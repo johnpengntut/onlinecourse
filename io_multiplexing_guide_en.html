@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Linux I/O Multiplexing Evolution Guide: select, poll, epoll &amp; signalfd</title>
+  <style>
+    :root {
+      --bg-page: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-subtle: #f1f5f9;
+      --bg-code: #0f172a;
+      --bg-code-header: #1e293b;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --accent-border: #bfdbfe;
+      --border: #e2e8f0;
+      --success: #059669;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --sidebar-width: 280px;
+      --radius: 10px;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-primary);
+      line-height: 1.7;
+      font-size: 16px;
+    }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar Navigation */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      overflow-y: auto;
+      padding: 28px 20px;
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.02rem;
+      color: var(--text-primary);
+      padding-bottom: 18px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-badge {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    .nav-group-title {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 20px 0 8px 10px;
+    }
+
+    .nav-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .nav-list li {
+      margin-bottom: 4px;
+    }
+
+    .nav-link {
+      display: block;
+      padding: 7px 12px;
+      border-radius: 7px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: all 0.15s ease;
+    }
+
+    .nav-link:hover {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+    }
+
+    .nav-link.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Main Content */
+    .main {
+      margin-left: var(--sidebar-width);
+      flex: 1;
+      padding: 40px 48px 80px;
+      max-width: 1080px;
+    }
+
+    /* Hero Header */
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: #ffffff;
+      border-radius: 14px;
+      padding: 38px 40px;
+      margin-bottom: 36px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .hero-tag {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.15);
+      color: #bfdbfe;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+      letter-spacing: 0.03em;
+    }
+
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: 1.95rem;
+      line-height: 1.28;
+      font-weight: 800;
+    }
+
+    .hero p {
+      margin: 0;
+      color: #cbd5e1;
+      font-size: 1.03rem;
+      max-width: 760px;
+    }
+
+    /* Sections & Typography */
+    section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 36px;
+      margin-bottom: 28px;
+      box-shadow: var(--shadow-sm);
+      scroll-margin-top: 24px;
+    }
+
+    h2 {
+      margin-top: 0;
+      margin-bottom: 16px;
+      font-size: 1.42rem;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--accent-border);
+      white-space: nowrap;
+    }
+
+    h3 {
+      margin-top: 26px;
+      margin-bottom: 10px;
+      font-size: 1.14rem;
+      color: var(--text-primary);
+    }
+
+    p {
+      margin-top: 0;
+      margin-bottom: 14px;
+      color: var(--text-secondary);
+    }
+
+    ul, ol {
+      color: var(--text-secondary);
+      padding-left: 22px;
+      margin-bottom: 16px;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    code {
+      font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      background: var(--bg-subtle);
+      color: #be185d;
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-size: 0.88em;
+    }
+
+    /* Callout Boxes */
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin: 20px 0;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warning);
+      background: #fffbeb;
+    }
+
+    .callout.success {
+      border-left-color: var(--success);
+      background: #ecfdf5;
+    }
+
+    .callout-title {
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+      font-size: 0.96rem;
+    }
+
+    .callout p:last-child, .callout ul:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Evolution Cards */
+    .stage-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+      margin: 20px 0;
+    }
+
+    .stage-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      background: var(--bg-page);
+    }
+
+    .stage-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .stage-name {
+      font-weight: 700;
+      font-size: 1.08rem;
+      color: var(--text-primary);
+      font-family: monospace;
+    }
+
+    .complexity-badge {
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+    }
+
+    .complexity-badge.fast {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    /* Tables */
+    .table-wrap {
+      overflow-x: auto;
+      margin: 20px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.92rem;
+    }
+
+    th {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      font-weight: 700;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-secondary);
+      vertical-align: top;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Diagram Container */
+    .diagram-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 22px 0;
+      text-align: center;
+      overflow-x: auto;
+    }
+
+    .diagram-caption {
+      font-size: 0.86rem;
+      color: var(--text-muted);
+      margin-top: 10px;
+    }
+
+    /* Code Blocks */
+    .code-block {
+      margin: 20px 0;
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--bg-code);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-code-header);
+      padding: 10px 16px;
+      color: #cbd5e1;
+      font-size: 0.85rem;
+      font-family: monospace;
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px 20px;
+      overflow-x: auto;
+      color: #e2e8f0;
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: 0.86rem;
+      line-height: 1.6;
+    }
+
+    /* Simple Syntax Highlighting */
+    .tok-kw { color: #93c5fd; font-weight: 600; }
+    .tok-type { color: #67e8f9; }
+    .tok-str { color: #86efac; }
+    .tok-num { color: #fca5a5; }
+    .tok-com { color: #94a3b8; font-style: italic; }
+    .tok-pp { color: #c4b5fd; }
+
+    /* Annotated Walkthrough Grid */
+    .walkthrough-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .wt-item {
+      display: grid;
+      grid-template-columns: 230px 1fr;
+      gap: 16px;
+      padding: 14px 16px;
+      background: var(--bg-page);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      align-items: start;
+    }
+
+    .wt-label {
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 0.9rem;
+    }
+
+    .wt-desc {
+      color: var(--text-secondary);
+      font-size: 0.94rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .sidebar {
+        position: static;
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 18px 20px;
+      }
+      .layout {
+        flex-direction: column;
+      }
+      .main {
+        margin-left: 0;
+        padding: 24px 18px 60px;
+      }
+      .wt-item {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-badge">LINUX C</span>
+        <span>I/O Multiplexing &amp; Signals</span>
+      </div>
+
+      <div class="nav-group-title">Core Concepts &amp; Evolution</div>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#overview">1. Why I/O Multiplexing?</a></li>
+        <li><a class="nav-link" href="#evolution">2. select &rarr; poll &rarr; epoll</a></li>
+        <li><a class="nav-link" href="#comparison">3. Feature Comparison Table</a></li>
+        <li><a class="nav-link" href="#signalfd">4. Unified Events: signalfd()</a></li>
+      </ul>
+
+      <div class="nav-group-title">Code Walkthroughs</div>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#code-select">5. V1: server5.c (select)</a></li>
+        <li><a class="nav-link" href="#code-poll">6. V2: poll + signalfd</a></li>
+        <li><a class="nav-link" href="#code-epoll">7. V3: epoll + signalfd</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <header class="hero">
+        <span class="hero-tag">Linux Systems Programming Guide</span>
+        <h1>Evolution of Select, Poll, and Epoll with Practical Server Refactoring</h1>
+        <p>From fixed-size bitmasks to modern kernel event-driven architectures: a complete breakdown of Linux I/O multiplexing bottlenecks and a step-by-step refactoring of a TCP server integrating <code>signalfd()</code> for race-free signal handling.</p>
+      </header>
+
+      <!-- Section 1: Overview -->
+      <section id="overview">
+        <h2><span class="step-pill">Background</span> 1. Why Do We Need I/O Multiplexing?</h2>
+        <p>When building a network server, an application must simultaneously monitor a <strong>listening socket</strong> for incoming connection requests and <strong>multiple client sockets</strong> for incoming data. Relying on traditional blocking I/O introduces severe architectural constraints:</p>
+        <ul>
+          <li><strong>Single-Process Blocking Dilemma</strong>: If a process blocks on <code>accept()</code> waiting for new clients, it cannot read data from already connected clients. Conversely, blocking on <code>read()</code> for one client freezes the entire server for everyone else.</li>
+          <li><strong>Multi-Process / Multi-Thread Overhead (e.g., <code>fork()</code>-per-client)</strong>: Spawning a dedicated child process per connection is conceptually straightforward, but when concurrent connections scale into the thousands, process creation, memory footprint, and context-switching overhead quickly exhaust system resources.</li>
+        </ul>
+        <p><strong>The core value of I/O multiplexing</strong> is enabling a single thread to monitor numerous file descriptors (FDs) through a single system call, sleeping efficiently until at least one descriptor becomes ready for I/O.</p>
+      </section>
+
+      <!-- Section 2: Evolution -->
+      <section id="evolution">
+        <h2><span class="step-pill">Evolution</span> 2. Three Generations: select &rarr; poll &rarr; epoll</h2>
+
+        <div class="stage-grid">
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <span class="stage-name">1st Gen: select()</span>
+              <span class="complexity-badge">O(N) Scan</span>
+            </div>
+            <p>Uses fixed-size bit arrays (<code>fd_set</code>) to track descriptors. Offers broad cross-platform portability, but suffers from rigid legacy limits.</p>
+          </div>
+
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <span class="stage-name">2nd Gen: poll()</span>
+              <span class="complexity-badge">O(N) Scan</span>
+            </div>
+            <p>Replaces bitmasks with a dynamic array of <code>struct pollfd</code> entries, separating requested events from returned events and removing the 1024-FD cap.</p>
+          </div>
+
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <span class="stage-name">3rd Gen: epoll</span>
+              <span class="complexity-badge fast">O(1) Ready</span>
+            </div>
+            <p>Linux-specific stateful architecture storing interest lists in a kernel red-black tree and maintaining a ready list via callbacks to solve the C10K problem.</p>
+          </div>
+        </div>
+
+        <h3>First Generation: <code>select()</code> Design and Four Bottlenecks</h3>
+        <p><code>select()</code> requires callers to pass three separate bitmasks—for readability (<code>readfds</code>), writability (<code>writefds</code>), and exceptional conditions (<code>exceptfds</code>)—which the kernel modifies in place to indicate ready descriptors. This creates four major limitations:</p>
+        <ol>
+          <li><strong>Hard 1,024-Descriptor Limit (<code>FD_SETSIZE</code>)</strong>: On Linux, <code>fd_set</code> is fixed at 1,024 bits. Any descriptor number &ge; 1024 cannot be monitored safely without risking buffer overflow.</li>
+          <li><strong>Destructive Arguments</strong>: Because the kernel overwrites the passed <code>fd_set</code>, the caller must copy a fresh backup of the master set on every single loop iteration (e.g., <code>testfds = readfds</code>).</li>
+          <li><strong>Repeated Copying and Linear Scanning</strong>: The entire <code>fd_set</code> must be copied from user space to kernel space on every call. Upon wakeup, user code must loop from <code>0</code> up to <code>max_fd</code> testing every bit—an <em>O</em>(<em>N</em>) scan regardless of how few sockets are active.</li>
+          <li><strong>Coarse Event Granularity</strong>: <code>select()</code> only reports read, write, or exception readiness. A peer disconnect simply surfaces as "readable," forcing an extra <code>ioctl(FIONREAD)</code> or <code>read() == 0</code> check to detect EOF.</li>
+        </ol>
+
+        <h3>Second Generation: <code>poll()</code> Interface Improvements &amp; Remaining Limits</h3>
+        <p><code>poll()</code> eliminates bitmasks in favor of a caller-allocated array of <code>struct pollfd</code> structures, each pairing an <code>fd</code> with separate <code>events</code> (input) and <code>revents</code> (output) fields:</p>
+        <ul>
+          <li><strong>No Hard Connection Limit</strong>: Array capacity is chosen by the developer, bounded only by system memory and <code>ulimit -n</code>.</li>
+          <li><strong>Reusable Descriptor Array</strong>: Because input flags (<code>events</code>) and output flags (<code>revents</code>) are decoupled, the array does not need to be reinitialized between iterations.</li>
+          <li><strong>Granular Status Flags</strong>: Distinguishes conditions such as <code>POLLIN</code>, <code>POLLOUT</code>, <code>POLLHUP</code> (peer hang-up), <code>POLLERR</code>, and <code>POLLNVAL</code>.</li>
+          <li><strong>Unresolved Kernel Bottleneck</strong>: <code>poll()</code> remains <em>stateless</em>. Every call still copies the entire <code>pollfd</code> array from user space to kernel space and linearly scans all <em>N</em> entries inside the kernel (<em>O</em>(<em>N</em>)). With tens of thousands of mostly idle connections, CPU cycles are wasted scanning inactive sockets.</li>
+        </ul>
+
+        <h3>Third Generation: <code>epoll</code> Architecture Revolution (Solving C10K)</h3>
+        <p>Introduced in Linux 2.6, <code>epoll</code> splits descriptor registration from event waiting across three system calls (<code>epoll_create1</code>, <code>epoll_ctl</code>, and <code>epoll_wait</code>), maintaining persistent state inside the kernel:</p>
+        <ul>
+          <li><strong>Kernel Red-Black Tree for Interest Management</strong>: Descriptors are added, modified, or removed once via <code>epoll_ctl()</code> (<em>O</em>(log <em>N</em>)), eliminating repeated user-to-kernel array copying during <code>epoll_wait()</code>.</li>
+          <li><strong>Callback-Driven Ready List for <em>O</em>(1) Retrieval</strong>: When network hardware interrupts arrive, kernel callbacks registered on each socket append ready descriptors directly to an internal Ready List. <code>epoll_wait()</code> simply harvests and copies back only the <em>k</em> active events.</li>
+          <li><strong>Level-Triggered (LT) &amp; Edge-Triggered (ET) Modes</strong>: Defaults to safe <strong>Level-Triggered</strong> semantics (continuing to notify while unread bytes remain in the buffer, matching <code>select</code>/<code>poll</code>), while optionally supporting high-throughput <strong>Edge-Triggered</strong> (<code>EPOLLET</code>) notifications on state transitions.</li>
+        </ul>
+
+        <!-- SVG Architecture Comparison Diagram -->
+        <div class="diagram-box">
+          <svg width="780" height="250" viewBox="0 0 780 250" xmlns="http://www.w3.org/2000/svg" style="max-width: 100%; height: auto;">
+            <!-- Left Side: select / poll -->
+            <rect x="10" y="10" width="365" height="230" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+            <text x="192" y="36" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#0f172a">select() / poll() Stateless Model — O(N) per call</text>
+            <line x1="25" y1="48" x2="360" y2="48" stroke="#e2e8f0"/>
+
+            <rect x="30" y="65" width="130" height="55" rx="6" fill="#eff6ff" stroke="#93c5fd"/>
+            <text x="95" y="88" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e40af">User Space</text>
+            <text x="95" y="106" text-anchor="middle" font-size="11" fill="#3b82f6">Full FD Array (N items)</text>
+
+            <rect x="225" y="65" width="130" height="55" rx="6" fill="#fef3c7" stroke="#fcd34d"/>
+            <text x="290" y="88" text-anchor="middle" font-size="12" font-weight="bold" fill="#92400e">Kernel Space</text>
+            <text x="290" y="106" text-anchor="middle" font-size="11" fill="#b45309">Linearly polls all N FDs</text>
+
+            <!-- Arrows -->
+            <path d="M 162 82 L 220 82" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+            <text x="191" y="76" text-anchor="middle" font-size="9.5" fill="#2563eb">Full copy every call</text>
+
+            <path d="M 220 105 L 162 105" stroke="#d97706" stroke-width="2" marker-end="url(#arrow-amber)"/>
+            <text x="191" y="120" text-anchor="middle" font-size="9.5" fill="#d97706">Return &amp; scan all N</text>
+
+            <rect x="30" y="145" width="325" height="75" rx="6" fill="#f8fafc" stroke="#e2e8f0"/>
+            <text x="45" y="168" font-size="11.5" fill="#475569">&bull; Entire interest set re-copied on every syscall</text>
+            <text x="45" y="188" font-size="11.5" fill="#475569">&bull; Kernel &amp; app scan all idle connections repeatedly</text>
+            <text x="45" y="208" font-size="11.5" fill="#dc2626" font-weight="bold">&bull; CPU bottlenecks on empty scans at 10k+ FDs</text>
+
+            <!-- Right Side: epoll -->
+            <rect x="405" y="10" width="365" height="230" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5"/>
+            <text x="587" y="36" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1e3a8a">epoll Stateful Event Model — O(1) Ready Retrieval</text>
+            <line x1="420" y1="48" x2="755" y2="48" stroke="#e2e8f0"/>
+
+            <rect x="425" y="65" width="120" height="70" rx="6" fill="#eff6ff" stroke="#93c5fd"/>
+            <text x="485" y="92" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e40af">User Space</text>
+            <text x="485" y="110" text-anchor="middle" font-size="11" fill="#3b82f6">Receives only k</text>
+            <text x="485" y="125" text-anchor="middle" font-size="11" fill="#3b82f6">active events (k &ll; N)</text>
+
+            <rect x="615" y="60" width="135" height="36" rx="6" fill="#ecfdf5" stroke="#6ee7b7"/>
+            <text x="682" y="82" text-anchor="middle" font-size="11" font-weight="bold" fill="#065f46">RB-Tree (N Monitored)</text>
+
+            <rect x="615" y="104" width="135" height="36" rx="6" fill="#dcfce7" stroke="#34d399"/>
+            <text x="682" y="126" text-anchor="middle" font-size="11" font-weight="bold" fill="#065f46">Ready List (k Active)</text>
+
+            <path d="M 547 78 L 610 78" stroke="#059669" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+            <text x="578" y="72" text-anchor="middle" font-size="9.5" fill="#059669">epoll_ctl once</text>
+
+            <path d="M 610 122 L 547 122" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)"/>
+            <text x="578" y="136" text-anchor="middle" font-size="9.5" fill="#059669">Copy k ready only</text>
+
+            <rect x="425" y="152" width="325" height="68" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+            <text x="440" y="173" font-size="11.5" fill="#166534">&bull; FDs registered/removed once via epoll_ctl()</text>
+            <text x="440" y="192" font-size="11.5" fill="#166534">&bull; NIC interrupts trigger callbacks into Ready List</text>
+            <text x="440" y="211" font-size="11.5" fill="#065f46" font-weight="bold">&bull; epoll_wait scales effortlessly to 10k+ sockets</text>
+
+            <defs>
+              <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill="#2563eb"/>
+              </marker>
+              <marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill="#d97706"/>
+              </marker>
+              <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill="#059669"/>
+              </marker>
+            </defs>
+          </svg>
+          <div class="diagram-caption">Figure 1: Data flow and algorithmic complexity comparison between stateless polling (select/poll) and stateful event notification (epoll).</div>
+        </div>
+      </section>
+
+      <!-- Section 3: Comparison Table -->
+      <section id="comparison">
+        <h2><span class="step-pill">Comparison</span> 3. Comprehensive Side-by-Side Comparison</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <th>select()</th>
+                <th>poll()</th>
+                <th>epoll</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Underlying Data Structure</strong></td>
+                <td>Fixed-size bitmask (<code>fd_set</code>)</td>
+                <td>Dynamic struct array (<code>struct pollfd[]</code>)</td>
+                <td>Kernel Red-Black Tree + Ready Doubly-Linked List</td>
+              </tr>
+              <tr>
+                <td><strong>Max Descriptor Limit</strong></td>
+                <td>Capped by <code>FD_SETSIZE</code> (default <strong>1024</strong>)</td>
+                <td><strong>No hard limit</strong> (bounded by RAM &amp; <code>ulimit</code>)</td>
+                <td><strong>No hard limit</strong> (bounded by system file limits)</td>
+              </tr>
+              <tr>
+                <td><strong>Ready Event Lookup</strong></td>
+                <td><em>O</em>(<em>N</em>) (scans <code>0</code> through <code>max_fd</code>)</td>
+                <td><em>O</em>(<em>N</em>) (scans all <code>nfds</code> array entries)</td>
+                <td><strong><em>O</em>(1)</strong> (returns only the <em>k</em> ready events)</td>
+              </tr>
+              <tr>
+                <td><strong>Add / Remove FD Cost</strong></td>
+                <td><em>O</em>(1) (local bit manipulation)</td>
+                <td><em>O</em>(1) (local array update)</td>
+                <td><em>O</em>(log <em>N</em>) (kernel red-black tree update)</td>
+              </tr>
+              <tr>
+                <td><strong>User / Kernel Copy Cost</strong></td>
+                <td>Copies entire <code>fd_set</code> on every call</td>
+                <td>Copies entire <code>pollfd</code> array on every call</td>
+                <td>Copied once in <code>epoll_ctl</code>; zero redundant copy in <code>epoll_wait</code></td>
+              </tr>
+              <tr>
+                <td><strong>Reusable Arguments</strong></td>
+                <td><strong>No</strong> (kernel overwrites <code>fd_set</code>; requires backup)</td>
+                <td><strong>Yes</strong> (<code>events</code> input vs. <code>revents</code> output)</td>
+                <td><strong>Yes</strong> (persisted inside the kernel instance)</td>
+              </tr>
+              <tr>
+                <td><strong>Trigger Modes</strong></td>
+                <td>Level-Triggered (LT) only</td>
+                <td>Level-Triggered (LT) only</td>
+                <td>Both Level-Triggered (LT) &amp; Edge-Triggered (ET)</td>
+              </tr>
+              <tr>
+                <td><strong>Portability</strong></td>
+                <td>Universal (POSIX / Windows)</td>
+                <td>High (all POSIX / Unix systems)</td>
+                <td>Linux only (<code>kqueue</code> on macOS/BSD)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Section 4: signalfd -->
+      <section id="signalfd">
+        <h2><span class="step-pill">Integration</span> 4. Unified Event Loop: Why Combine <code>signalfd()</code>?</h2>
+        <p>Production network servers must support <strong>graceful shutdown</strong>—catching <code>SIGINT</code> (Ctrl+C) or <code>SIGTERM</code> to exit the event loop cleanly and close all open sockets. Relying on traditional asynchronous <code>signal()</code> or <code>sigaction()</code> handlers introduces three classic pitfalls:</p>
+        <ul>
+          <li><strong>Interrupted System Calls (<code>EINTR</code>)</strong>: Asynchronous signals can interrupt blocking calls like <code>select()</code>, <code>poll()</code>, or <code>accept()</code> at arbitrary moments, requiring boilerplate retry loops everywhere.</li>
+          <li><strong>Async-Signal-Safety Constraints</strong>: Signal handlers cannot safely call non-reentrant functions like <code>printf()</code>, <code>malloc()</code>, or complex cleanup routines without risking deadlocks.</li>
+          <li><strong>Check-Then-Sleep Race Conditions</strong>: If a signal arrives right after the main loop checks a <code>volatile sig_atomic_t</code> stop flag (seeing <code>0</code>) but just before entering the blocking wait syscall, the wakeup is missed and the server hangs indefinitely.</li>
+        </ul>
+
+        <div class="callout success">
+          <div class="callout-title">Core Design Philosophy of signalfd(): Turning Signals into Readable Descriptors</div>
+          <p>By blocking target signals via <code>sigprocmask(SIG_BLOCK, ...)</code> and creating a descriptor with <code>signalfd()</code>, signals no longer interrupt execution asynchronously. Instead, pending signals queue neatly in the kernel and surface as standard readable events inside <code>poll()</code> or <code>epoll_wait()</code>—unifying <strong>network I/O</strong> and <strong>OS signals</strong> in one synchronous, race-free event loop.</p>
+        </div>
+      </section>
+
+      <!-- Section 5: Code 1 - server5.c -->
+      <section id="code-select">
+        <h2><span class="step-pill">Walkthrough 1</span> 5. Baseline Version: <code>server5.c</code> (Classic <code>select()</code>)</h2>
+        <p>This baseline program implements a single-process TCP echo-increment server on port <code>9734</code> using <code>select()</code> and <code>fd_set</code> to multiplex the listening socket alongside active client connections.</p>
+
+        <div class="code-block">
+          <div class="code-header">
+            <span>server5.c — Original select() Implementation</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy Code</button>
+          </div>
+          <pre><code><span class="tok-pp">#include &lt;sys/types.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/socket.h&gt;</span>
+<span class="tok-pp">#include &lt;stdio.h&gt;</span>
+<span class="tok-pp">#include &lt;netinet/in.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/time.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/ioctl.h&gt;</span>
+<span class="tok-pp">#include &lt;unistd.h&gt;</span>
+<span class="tok-pp">#include &lt;stdlib.h&gt;</span>
+
+<span class="tok-type">int</span> main()
+{
+    <span class="tok-type">int</span> server_sockfd, client_sockfd;
+    <span class="tok-type">int</span> server_len, client_len;
+    <span class="tok-kw">struct</span> sockaddr_in server_address;
+    <span class="tok-kw">struct</span> sockaddr_in client_address;
+    <span class="tok-type">int</span> result;
+    <span class="tok-type">fd_set</span> readfds, testfds;
+
+    <span class="tok-com">/* 1. Create TCP socket and bind to port 9734 */</span>
+    server_sockfd = socket(AF_INET, SOCK_STREAM, <span class="tok-num">0</span>);
+
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_address.sin_port = htons(<span class="tok-num">9734</span>);
+    server_len = <span class="tok-kw">sizeof</span>(server_address);
+
+    bind(server_sockfd, (<span class="tok-kw">struct</span> sockaddr *)&amp;server_address, server_len);
+
+    <span class="tok-com">/* 2. Create listen queue and initialize master readfds set */</span>
+    listen(server_sockfd, <span class="tok-num">5</span>);
+
+    FD_ZERO(&amp;readfds);
+    FD_SET(server_sockfd, &amp;readfds);
+
+    <span class="tok-kw">while</span>(<span class="tok-num">1</span>) {
+        <span class="tok-type">char</span> ch;
+        <span class="tok-type">int</span> fd;
+        <span class="tok-type">int</span> nread;
+
+        <span class="tok-com">/* Must copy readfds every iteration because select() mutates it in place */</span>
+        testfds = readfds;
+
+        printf(<span class="tok-str">"server waiting\n"</span>);
+        result = select(FD_SETSIZE, &amp;testfds, (<span class="tok-type">fd_set</span> *)<span class="tok-num">0</span>,
+            (<span class="tok-type">fd_set</span> *)<span class="tok-num">0</span>, (<span class="tok-kw">struct</span> timeval *)<span class="tok-num">0</span>);
+
+        <span class="tok-kw">if</span>(result &lt; <span class="tok-num">1</span>) {
+            perror(<span class="tok-str">"server5"</span>);
+            exit(<span class="tok-num">1</span>);
+        }
+
+        <span class="tok-com">/* 3. Linearly scan from 0 to FD_SETSIZE (1024) to locate active FDs */</span>
+        <span class="tok-kw">for</span>(fd = <span class="tok-num">0</span>; fd &lt; FD_SETSIZE; fd++) {
+            <span class="tok-kw">if</span>(FD_ISSET(fd, &amp;testfds)) {
+
+                <span class="tok-com">/* Case A: Listening socket ready -> accept new client connection */</span>
+                <span class="tok-kw">if</span>(fd == server_sockfd) {
+                    client_len = <span class="tok-kw">sizeof</span>(client_address);
+                    client_sockfd = accept(server_sockfd,
+                        (<span class="tok-kw">struct</span> sockaddr *)&amp;client_address, &amp;client_len);
+                    FD_SET(client_sockfd, &amp;readfds);
+                    printf(<span class="tok-str">"adding client on fd %d\n"</span>, client_sockfd);
+                }
+                <span class="tok-com">/* Case B: Connected client socket ready -> check for EOF or payload */</span>
+                <span class="tok-kw">else</span> {
+                    ioctl(fd, FIONREAD, &amp;nread);
+
+                    <span class="tok-kw">if</span>(nread == <span class="tok-num">0</span>) {
+                        <span class="tok-com">/* Zero readable bytes indicates peer closed connection (EOF) */</span>
+                        close(fd);
+                        FD_CLR(fd, &amp;readfds);
+                        printf(<span class="tok-str">"removing client on fd %d\n"</span>, fd);
+                    }
+                    <span class="tok-kw">else</span> {
+                        read(fd, &amp;ch, <span class="tok-num">1</span>);
+                        sleep(<span class="tok-num">5</span>);
+                        printf(<span class="tok-str">"serving client on fd %d\n"</span>, fd);
+                        ch++;
+                        write(fd, &amp;ch, <span class="tok-num">1</span>);
+                    }
+                }
+            }
+        }
+    }
+}</code></pre>
+        </div>
+
+        <h3>Key Mechanics &amp; Architectural Limitations</h3>
+        <div class="walkthrough-list">
+          <div class="wt-item">
+            <div class="wt-label"><code>testfds = readfds;</code></div>
+            <div class="wt-desc"><code>select()</code> clears bits for all non-ready descriptors upon return. Passing <code>readfds</code> directly would erase tracked sockets, forcing a full bitmask copy every loop.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label"><code>for(fd = 0; fd &lt; FD_SETSIZE; ...)</code></div>
+            <div class="wt-desc">Even with a single active client, the loop executes 1,024 <code>FD_ISSET</code> checks per wakeup and fails if any descriptor reaches 1024.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label"><code>ioctl(fd, FIONREAD, &amp;nread)</code></div>
+            <div class="wt-desc">Queries how many bytes are queued in the socket receive buffer. A readable event with <code>nread == 0</code> signals a clean TCP FIN disconnect, prompting <code>close(fd)</code> and <code>FD_CLR()</code>.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label">Design Drawbacks</div>
+            <div class="wt-desc">&bull; <strong>No Graceful Shutdown</strong>: The infinite <code>while(1)</code> loop terminates abruptly on <code>SIGINT</code> without closing open sockets.<br>&bull; <strong>Event-Loop Blocking</strong>: Calling <code>sleep(5)</code> inside a single-threaded event loop stalls all other clients for 5 full seconds.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 6: Code 2 - poll + signalfd -->
+      <section id="code-poll">
+        <h2><span class="step-pill">Walkthrough 2</span> 6. Refactored Version: <code>poll()</code> + <code>signalfd()</code></h2>
+        <p>This version preserves the single-process multiplexing design of <code>server5.c</code> while replacing <code>select()</code> with <code>poll()</code> to remove the 1,024-FD cap, and registering a <code>signalfd()</code> descriptor for <code>SIGINT</code> and <code>SIGTERM</code> to enable clean shutdown.</p>
+
+        <div class="code-block">
+          <div class="code-header">
+            <span>server5_poll_signalfd.c — Refactored with poll() &amp; signalfd()</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy Code</button>
+          </div>
+          <pre><code><span class="tok-pp">#include &lt;sys/types.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/socket.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/signalfd.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/ioctl.h&gt;</span>
+<span class="tok-pp">#include &lt;netinet/in.h&gt;</span>
+<span class="tok-pp">#include &lt;signal.h&gt;</span>
+<span class="tok-pp">#include &lt;poll.h&gt;</span>
+<span class="tok-pp">#include &lt;unistd.h&gt;</span>
+<span class="tok-pp">#include &lt;stdio.h&gt;</span>
+<span class="tok-pp">#include &lt;stdlib.h&gt;</span>
+
+<span class="tok-pp">#define MAX_CLIENTS 1024</span>
+
+<span class="tok-type">int</span> main(<span class="tok-type">void</span>) {
+    <span class="tok-type">int</span> server_sockfd = socket(AF_INET, SOCK_STREAM, <span class="tok-num">0</span>);
+    <span class="tok-kw">struct</span> sockaddr_in server_address = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+        .sin_port = htons(<span class="tok-num">9734</span>)
+    };
+    bind(server_sockfd, (<span class="tok-kw">struct</span> sockaddr *)&amp;server_address, <span class="tok-kw">sizeof</span>(server_address));
+    listen(server_sockfd, <span class="tok-num">5</span>);
+
+    <span class="tok-com">/* 1. Block SIGINT and SIGTERM, then wrap them in a signalfd */</span>
+    <span class="tok-type">sigset_t</span> mask;
+    sigemptyset(&amp;mask);
+    sigaddset(&amp;mask, SIGINT);
+    sigaddset(&amp;mask, SIGTERM);
+    sigprocmask(SIG_BLOCK, &amp;mask, NULL);
+
+    <span class="tok-type">int</span> sfd = signalfd(-<span class="tok-num">1</span>, &amp;mask, SFD_NONBLOCK | SFD_CLOEXEC);
+
+    <span class="tok-com">/* 2. Initialize pollfd array: [0] = listening socket, [1] = signalfd */</span>
+    <span class="tok-kw">struct</span> pollfd fds[MAX_CLIENTS + <span class="tok-num">2</span>];
+    <span class="tok-type">int</span> nfds = <span class="tok-num">2</span>;
+    fds[<span class="tok-num">0</span>] = (<span class="tok-kw">struct</span> pollfd){ .fd = server_sockfd, .events = POLLIN };
+    fds[<span class="tok-num">1</span>] = (<span class="tok-kw">struct</span> pollfd){ .fd = sfd,           .events = POLLIN };
+
+    <span class="tok-type">int</span> running = <span class="tok-num">1</span>;
+    <span class="tok-kw">while</span> (running) {
+        printf(<span class="tok-str">"server waiting\n"</span>);
+        <span class="tok-kw">if</span> (poll(fds, nfds, -<span class="tok-num">1</span>) &lt; <span class="tok-num">0</span>) {
+            perror(<span class="tok-str">"poll"</span>);
+            <span class="tok-kw">break</span>;
+        }
+
+        <span class="tok-com">/* Iterate only across the active nfds entries (no sparse scanning) */</span>
+        <span class="tok-kw">for</span> (<span class="tok-type">int</span> i = <span class="tok-num">0</span>; i &lt; nfds; i++) {
+            <span class="tok-kw">if</span> (!(fds[i].revents &amp; POLLIN)) <span class="tok-kw">continue</span>;
+
+            <span class="tok-kw">if</span> (fds[i].fd == sfd) {
+                <span class="tok-com">/* SIGINT or SIGTERM received: read siginfo and exit loop cleanly */</span>
+                <span class="tok-kw">struct</span> signalfd_siginfo fdsi;
+                read(sfd, &amp;fdsi, <span class="tok-kw">sizeof</span>(fdsi));
+                printf(<span class="tok-str">"\nReceived signal %d, shutting down...\n"</span>, fdsi.ssi_signo);
+                running = <span class="tok-num">0</span>;
+                <span class="tok-kw">break</span>;
+            } <span class="tok-kw">else if</span> (fds[i].fd == server_sockfd) {
+                <span class="tok-com">/* Accept incoming client and append to pollfd array */</span>
+                <span class="tok-kw">struct</span> sockaddr_in client_address;
+                <span class="tok-type">socklen_t</span> client_len = <span class="tok-kw">sizeof</span>(client_address);
+                <span class="tok-type">int</span> client_sockfd = accept(server_sockfd,
+                    (<span class="tok-kw">struct</span> sockaddr *)&amp;client_address, &amp;client_len);
+                <span class="tok-kw">if</span> (client_sockfd &gt;= <span class="tok-num">0</span> &amp;&amp; nfds &lt; MAX_CLIENTS + <span class="tok-num">2</span>) {
+                    fds[nfds++] = (<span class="tok-kw">struct</span> pollfd){ .fd = client_sockfd, .events = POLLIN };
+                    printf(<span class="tok-str">"adding client on fd %d\n"</span>, client_sockfd);
+                }
+            } <span class="tok-kw">else</span> {
+                <span class="tok-com">/* Handle client data or disconnect */</span>
+                <span class="tok-type">int</span> nread = <span class="tok-num">0</span>;
+                ioctl(fds[i].fd, FIONREAD, &amp;nread);
+                <span class="tok-kw">if</span> (nread == <span class="tok-num">0</span>) {
+                    printf(<span class="tok-str">"removing client on fd %d\n"</span>, fds[i].fd);
+                    close(fds[i].fd);
+                    fds[i] = fds[--nfds]; <span class="tok-com">/* Swap-with-last for O(1) array compaction */</span>
+                    i--;                  <span class="tok-com">/* Re-inspect the swapped-in element */</span>
+                } <span class="tok-kw">else</span> {
+                    <span class="tok-type">char</span> ch;
+                    read(fds[i].fd, &amp;ch, <span class="tok-num">1</span>);
+                    printf(<span class="tok-str">"serving client on fd %d\n"</span>, fds[i].fd);
+                    ch++;
+                    write(fds[i].fd, &amp;ch, <span class="tok-num">1</span>);
+                }
+            }
+        }
+    }
+
+    <span class="tok-com">/* 3. Unified cleanup: close all remaining client sockets, server socket, and signalfd */</span>
+    <span class="tok-kw">for</span> (<span class="tok-type">int</span> i = <span class="tok-num">0</span>; i &lt; nfds; i++) close(fds[i].fd);
+    <span class="tok-kw">return</span> <span class="tok-num">0</span>;
+}</code></pre>
+        </div>
+
+        <h3>Implementation Highlights</h3>
+        <div class="walkthrough-list">
+          <div class="wt-item">
+            <div class="wt-label"><code>sigprocmask(SIG_BLOCK, ...)</code></div>
+            <div class="wt-desc">Target signals <strong>must</strong> be blocked before creating <code>signalfd</code>; otherwise, default signal dispositions (process termination) will trigger before <code>signalfd</code> can read them.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label"><code>fds[i] = fds[--nfds]; i--;</code></div>
+            <div class="wt-desc"><strong><em>O</em>(1) Swap-and-Pop Removal</strong>: When a client disconnects at index <code>i</code>, the last active entry in <code>fds</code> is moved into slot <code>i</code> and <code>nfds</code> is decremented. Decrementing <code>i</code> ensures the newly moved entry is not skipped on the next iteration.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label">Unified Resource Cleanup</div>
+            <div class="wt-desc">Upon receiving a termination signal, <code>running</code> becomes <code>0</code>, exiting the main loop cleanly so a single <code>for</code> loop closes every active socket and <code>signalfd</code> without descriptor leaks.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 7: Code 3 - epoll + signalfd -->
+      <section id="code-epoll">
+        <h2><span class="step-pill">Walkthrough 3</span> 7. High-Concurrency Version: <code>epoll</code> + <code>signalfd()</code></h2>
+        <p>When scaling to thousands or tens of thousands of concurrent connections, migrating to <code>epoll</code> offloads descriptor tracking into the Linux kernel. User code no longer compacts arrays on disconnect, and each wakeup processes only truly active descriptors.</p>
+
+        <div class="code-block">
+          <div class="code-header">
+            <span>server5_epoll_signalfd.c — High-Concurrency epoll &amp; signalfd()</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy Code</button>
+          </div>
+          <pre><code><span class="tok-pp">#include &lt;sys/types.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/socket.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/epoll.h&gt;</span>
+<span class="tok-pp">#include &lt;sys/signalfd.h&gt;</span>
+<span class="tok-pp">#include &lt;netinet/in.h&gt;</span>
+<span class="tok-pp">#include &lt;signal.h&gt;</span>
+<span class="tok-pp">#include &lt;unistd.h&gt;</span>
+<span class="tok-pp">#include &lt;stdio.h&gt;</span>
+<span class="tok-pp">#include &lt;stdlib.h&gt;</span>
+
+<span class="tok-pp">#define MAX_EVENTS 64</span>
+
+<span class="tok-type">int</span> main(<span class="tok-type">void</span>) {
+    <span class="tok-com">/* Create non-blocking listening socket with SO_REUSEADDR for fast restarts */</span>
+    <span class="tok-type">int</span> server_sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, <span class="tok-num">0</span>);
+    <span class="tok-type">int</span> opt = <span class="tok-num">1</span>;
+    setsockopt(server_sockfd, SOL_SOCKET, SO_REUSEADDR, &amp;opt, <span class="tok-kw">sizeof</span>(opt));
+
+    <span class="tok-kw">struct</span> sockaddr_in server_address = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+        .sin_port = htons(<span class="tok-num">9734</span>)
+    };
+    bind(server_sockfd, (<span class="tok-kw">struct</span> sockaddr *)&amp;server_address, <span class="tok-kw">sizeof</span>(server_address));
+    listen(server_sockfd, <span class="tok-num">128</span>);
+
+    <span class="tok-com">/* 1. Block SIGINT and SIGTERM, and create signalfd */</span>
+    <span class="tok-type">sigset_t</span> mask;
+    sigemptyset(&amp;mask);
+    sigaddset(&amp;mask, SIGINT);
+    sigaddset(&amp;mask, SIGTERM);
+    sigprocmask(SIG_BLOCK, &amp;mask, NULL);
+
+    <span class="tok-type">int</span> sfd = signalfd(-<span class="tok-num">1</span>, &amp;mask, SFD_NONBLOCK | SFD_CLOEXEC);
+
+    <span class="tok-com">/* 2. Create epoll instance and register server_sockfd and signalfd */</span>
+    <span class="tok-type">int</span> epfd = epoll_create1(EPOLL_CLOEXEC);
+    <span class="tok-kw">struct</span> epoll_event ev, events[MAX_EVENTS];
+
+    ev.events = EPOLLIN;
+    ev.data.fd = server_sockfd;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, server_sockfd, &amp;ev);
+
+    ev.events = EPOLLIN;
+    ev.data.fd = sfd;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, sfd, &amp;ev);
+
+    <span class="tok-type">int</span> running = <span class="tok-num">1</span>;
+    <span class="tok-kw">while</span> (running) {
+        printf(<span class="tok-str">"server waiting\n"</span>);
+        <span class="tok-com">/* epoll_wait populates events[] ONLY with ready descriptors */</span>
+        <span class="tok-type">int</span> nfds = epoll_wait(epfd, events, MAX_EVENTS, -<span class="tok-num">1</span>);
+        <span class="tok-kw">if</span> (nfds &lt; <span class="tok-num">0</span>) {
+            perror(<span class="tok-str">"epoll_wait"</span>);
+            <span class="tok-kw">break</span>;
+        }
+
+        <span class="tok-kw">for</span> (<span class="tok-type">int</span> i = <span class="tok-num">0</span>; i &lt; nfds; i++) {
+            <span class="tok-type">int</span> fd = events[i].data.fd;
+
+            <span class="tok-kw">if</span> (fd == sfd) {
+                <span class="tok-com">/* Signal event: break out of loop safely */</span>
+                <span class="tok-kw">struct</span> signalfd_siginfo fdsi;
+                read(sfd, &amp;fdsi, <span class="tok-kw">sizeof</span>(fdsi));
+                printf(<span class="tok-str">"\nReceived signal %d, shutting down...\n"</span>, fdsi.ssi_signo);
+                running = <span class="tok-num">0</span>;
+                <span class="tok-kw">break</span>;
+            } <span class="tok-kw">else if</span> (fd == server_sockfd) {
+                <span class="tok-com">/* Accept new client as SOCK_NONBLOCK and register with epoll */</span>
+                <span class="tok-kw">struct</span> sockaddr_in client_address;
+                <span class="tok-type">socklen_t</span> client_len = <span class="tok-kw">sizeof</span>(client_address);
+                <span class="tok-type">int</span> client_sockfd = accept4(server_sockfd,
+                    (<span class="tok-kw">struct</span> sockaddr *)&amp;client_address, &amp;client_len, SOCK_NONBLOCK);
+                <span class="tok-kw">if</span> (client_sockfd &gt;= <span class="tok-num">0</span>) {
+                    ev.events = EPOLLIN;
+                    ev.data.fd = client_sockfd;
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, client_sockfd, &amp;ev);
+                    printf(<span class="tok-str">"adding client on fd %d\n"</span>, client_sockfd);
+                }
+            } <span class="tok-kw">else</span> {
+                <span class="tok-com">/* Serve client payload or handle disconnect */</span>
+                <span class="tok-type">char</span> ch;
+                <span class="tok-type">ssize_t</span> n = read(fd, &amp;ch, <span class="tok-num">1</span>);
+                <span class="tok-kw">if</span> (n &lt;= <span class="tok-num">0</span>) {
+                    printf(<span class="tok-str">"removing client on fd %d\n"</span>, fd);
+                    close(fd); <span class="tok-com">/* Closing the FD automatically removes it from epoll */</span>
+                } <span class="tok-kw">else</span> {
+                    printf(<span class="tok-str">"serving client on fd %d\n"</span>, fd);
+                    ch++;
+                    write(fd, &amp;ch, <span class="tok-num">1</span>);
+                }
+            }
+        }
+    }
+
+    close(sfd);
+    close(server_sockfd);
+    close(epfd);
+    <span class="tok-kw">return</span> <span class="tok-num">0</span>;
+}</code></pre>
+        </div>
+
+        <h3>Production Notes &amp; Key Details</h3>
+        <div class="walkthrough-list">
+          <div class="wt-item">
+            <div class="wt-label"><code>SO_REUSEADDR</code> &amp; <code>SOCK_NONBLOCK</code></div>
+            <div class="wt-desc"><code>SO_REUSEADDR</code> allows immediate rebinding to port 9734 if previous sockets remain in <code>TIME_WAIT</code>. Using <code>SOCK_NONBLOCK</code> and <code>accept4(..., SOCK_NONBLOCK)</code> ensures slow peers never block the single-threaded reactor loop.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label">What <code>MAX_EVENTS 64</code> Means</div>
+            <div class="wt-desc"><code>MAX_EVENTS</code> is <strong>not</strong> a cap on total concurrent connections—it is merely the batch size harvested per <code>epoll_wait()</code> call. If 200 sockets are ready simultaneously, the first call retrieves 64 and the next loop iteration immediately retrieves the rest without dropping any events.</div>
+          </div>
+          <div class="wt-item">
+            <div class="wt-label">Automatic Removal on <code>close(fd)</code></div>
+            <div class="wt-desc">Provided no duplicate file descriptors refer to the same underlying open file description (via <code>dup</code>/<code>fork</code>), calling <code>close(fd)</code> automatically unregisters the descriptor from the <code>epoll</code> red-black tree.</div>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <div class="callout-title">Architectural Selection Rule of Thumb</div>
+          <p>If your service must run portably across macOS, FreeBSD, and Linux with a few hundred concurrent connections, <strong><code>poll()</code> + <code>signalfd()</code> (or a self-pipe)</strong> provides maximum portability and simplicity. When targeting Linux with thousands to tens of thousands of concurrent connections, <strong><code>epoll</code> + <code>signalfd()</code></strong> is the industry standard.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    // Copy button functionality
+    function copyCode(btn) {
+      const code = btn.closest('.code-block').querySelector('pre').innerText;
+      navigator.clipboard.writeText(code).then(() => {
+        const orig = btn.innerText;
+        btn.innerText = 'Copied!';
+        setTimeout(() => { btn.innerText = orig; }, 1500);
+      });
+    }
+
+    // Active sidebar link highlighting on scroll
+    const sections = document.querySelectorAll('section');
+    const navLinks = document.querySelectorAll('.nav-link');
+
+    window.addEventListener('scroll', () => {
+      let current = '';
+      sections.forEach(sec => {
+        const top = sec.offsetTop - 80;
+        if (window.scrollY >= top) {
+          current = sec.getAttribute('id');
+        }
+      });
+
+      navLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + current) {
+          link.classList.add('active');
+        }
+      });
+    });
+  </script>
+</body>
+</html>
